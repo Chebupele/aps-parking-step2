@@ -1,0 +1,90 @@
+@startuml
+skinparam defaultFontName Arial
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam backgroundColor white
+skinparam classAttributeIconSize 0
+hide circle
+hide footbox
+skinparam maxMessageSize 220
+autonumber
+title Мониторинг парковок — обработка событий
+participant "Модель" as M
+participant "Календарь" as C
+participant "Камера" as S
+control "ДП" as DP
+queue "Буфер" as B
+control "ДВ" as DV
+participant "Прибор j" as P
+participant "Статистика" as ST
+
+note over M,C
+  В начале буфер пуст, приборы свободны, УБ = УП = 0.
+  Для каждой камеры запланировано первое ARRIVAL.
+end note
+loop Ближайшее событие не позже T
+  M -> C: popNext()
+  C --> M: event
+  M -> M: now = event.getTime()
+  alt ARRIVAL — пришёл кадр
+    M -> S: generate(now, id)
+    S --> M: request
+    M -> S: nextArrival(now)
+    S --> M: t = now + U(a, b) [ИБ, ИЗ2]
+    M -> C: schedule(t, ARRIVAL, sourceId)
+    M -> DP: onGenerated(request, now)
+    DP -> ST: record(GENERATED, request, now)
+    DP -> B: findFreeRing(УБ) [Д1ОЗ1 — по кольцу]
+    B --> DP: index или null
+    alt Буфер полон, все приборы заняты
+      DP -> B: evictOldest() [Д1ОО3 — самая старая]
+      B --> DP: index, victim
+      DP -> ST: record(REFUSED, victim, now)
+    end
+    DP -> B: insert(index, request)
+    B --> DP: заявка в буфере
+    DP -> DP: УБ = (index + 1) mod M
+    DP -> ST: record(BUFFERED, request, now)
+    DP --> M: кадр принят
+  else FINISH — закончилось обслуживание
+    M -> P: finish(now)
+    P --> M: request, прибор свободен
+    M -> ST: record(COMPLETED, request, now, j)
+  end
+
+  M -> DV: dispatch(now)
+  DV -> B: isEmpty()
+  B --> DV: empty
+  loop Пока empty = false
+    DV -> DV: findFreeProcessor() [Д2П2 — по кольцу от УП]
+    loop До первого свободного, не более k проверок
+      DV -> P: isFree()
+      P --> DV: свободен / занят
+    end
+    alt Все приборы заняты
+      break Завершить dispatch
+        DV --> M: заявки ждут в буфере
+      end
+    else Найден свободный прибор j
+      DV -> B: takeNewest() [Д2Б2 — LIFO]
+      B --> DV: request, ячейка освобождена
+      DV -> ST: record(SELECTED, request, now)
+      DV -> P: start(request, now)
+      P --> DV: finishTime = now + Exp(mu) [ПЗ1]
+      DV -> C: schedule(finishTime, FINISH, j)
+      DV -> ST: record(STARTED, request, now, j)
+      DV -> DV: УП = (j + 1) mod k
+    end
+    DV -> B: isEmpty()
+    B --> DV: empty
+  end
+  DV --> M: назначения завершены
+end
+M -> ST: showResults(T)
+note over M,ST
+  Happy flow: при пустом буфере и свободном приборе кадр сразу начинает обслуживание.
+  При переполнении отказ получает старая заявка, новая остаётся в буфере.
+  После ожидания календарь выдаёт FINISH, затем ДВ назначает самую новую заявку.
+  Пока приборы заняты, календарь продолжает принимать ARRIVAL.
+end note
+@enduml

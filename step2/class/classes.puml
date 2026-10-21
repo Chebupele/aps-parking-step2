@@ -1,0 +1,135 @@
+@startuml
+skinparam defaultFontName Arial
+skinparam defaultFontSize 14
+skinparam shadowing false
+skinparam backgroundColor white
+skinparam classAttributeIconSize 0
+hide circle
+hide footbox
+!pragma layout smetana
+title Мониторинг парковок — классы модели
+class SimulationModel {
+  - now: double
+  - horizon: double
+  - requestId: long
+  - sources: CameraSource[]
+  - workers: FrameProcessor[]
+  - buffer: FrameBuffer
+  - intake: IntakeDispatcher
+  - dispatch: ServiceDispatcher
+  - calendar: EventCalendar
+  - statistics: Statistics
+  + initialize(): void
+  + step(): bool
+  + run(): void
+}
+class CameraSource {
+  - id: int
+  - minInterval: double
+  - maxInterval: double
+  + generate(now: double, id: long): FrameRequest
+  + nextArrival(now: double): double
+}
+class FrameRequest {
+  - id: long
+  - sourceId: int
+  - createdAt: double
+  - startedAt: double
+  - finishedAt: double
+  - status: string
+  + key(): (double, long)
+  + getSourceId(): int
+  + getTimes(): double[]
+  + setState(status: string, now: double): void
+}
+class FrameBuffer {
+  - slots: FrameRequest?[]
+  + isEmpty(): bool
+  + findFreeRing(start: int): int?
+  + evictOldest(): (int, FrameRequest)
+  + insert(index: int, request: FrameRequest): void
+  + takeNewest(): FrameRequest
+}
+class IntakeDispatcher {
+  - buffer: FrameBuffer
+  - statistics: Statistics
+  - writePointer: int
+  + onGenerated(request: FrameRequest, now: double): void
+}
+class ServiceDispatcher {
+  - buffer: FrameBuffer
+  - workers: FrameProcessor[]
+  - calendar: EventCalendar
+  - statistics: Statistics
+  - processorPointer: int
+  + dispatch(now: double): void
+  - findFreeProcessor(): int?
+}
+class FrameProcessor {
+  - id: int
+  - serviceRate: double
+  - currentRequest: FrameRequest?
+  + isFree(): bool
+  + start(request: FrameRequest, now: double): double
+  + finish(now: double): FrameRequest
+}
+class EventCalendar {
+  - events: Event[]
+  + schedule(time: double, type: string, objectId: int): void
+  + nextTime(): double?
+  + popNext(): Event
+}
+class Event {
+  - time: double
+  - type: string
+  - objectId: int
+  + getTime(): double
+  + getType(): string
+  + getObjectId(): int
+}
+class Statistics {
+  - generated: long[]
+  - refused: long[]
+  - completed: long[]
+  - busyTime: double[]
+  - times: double[][]
+  - journal: List
+  + record(action: string, request: FrameRequest, now: double, workerId: int = -1): void
+  + showResults(horizon: double): void
+}
+SimulationModel *-- CameraSource
+SimulationModel *-- FrameProcessor
+SimulationModel *-- FrameBuffer
+SimulationModel *-- IntakeDispatcher
+SimulationModel *-- ServiceDispatcher
+SimulationModel *-- EventCalendar
+SimulationModel *-- Statistics
+IntakeDispatcher --> FrameBuffer : buffer
+IntakeDispatcher --> Statistics : statistics
+ServiceDispatcher --> FrameBuffer : buffer
+ServiceDispatcher --> FrameProcessor : workers
+ServiceDispatcher --> EventCalendar : calendar
+ServiceDispatcher --> Statistics : statistics
+CameraSource ..> FrameRequest : создаёт
+FrameBuffer --> "0..M" FrameRequest : slots
+FrameProcessor --> "0..1" FrameRequest : currentRequest
+EventCalendar *-- "0..*" Event
+note right of IntakeDispatcher
+  ДП — алгоритм приёма кадров.
+  УБ = writePointer.
+  Работает только с буфером.
+end note
+note right of ServiceDispatcher
+  ДВ — алгоритм назначения.
+  УП = processorPointer.
+  Вызывается после прихода кадра
+  и освобождения прибора.
+end note
+legend bottom
+  ИБ, ИЗ2: камеры независимы, интервалы U(a, b).
+  ПЗ1: длительность обработки Exp(mu).
+  Д1ОЗ1: запись по кольцу. Д1ОО3: выбивание самой старой заявки.
+  Д2Б2: LIFO. Д2П2: выбор свободного прибора по кольцу.
+  Знак «-» — приватное поле, «+» — публичный метод.
+endlegend
+@enduml
